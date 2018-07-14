@@ -23,11 +23,13 @@ class BSDSDataset(Dataset):
         self.labels = []
 
         for image in self.wrapper.train_sample_names:
-            x = np.array(self.wrapper.read_image(image), dtype=np.float) / 256.0
+            x = self.wrapper.read_image(image)
             x = imresize(x, (320, 320)).reshape((320, 320, 3))
             x = x.transpose(2, 0, 1)
-            y = np.array(self.wrapper.load_boundaries(os.path.join(ground_truth_dir, image))[0], dtype=np.float)
-            y = imresize(y, (320, 320)).reshape((320, 320))
+            x = np.array(x, dtype=np.float) / 256.0
+            y = self.wrapper.load_boundaries(os.path.join(ground_truth_dir, image))[0]
+            y = imresize(y, (320, 320)).reshape((1, 320, 320))
+            y = np.array(y, dtype=np.float)
             self.images.append(x)
             self.labels.append(y)
 

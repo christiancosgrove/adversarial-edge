@@ -1,3 +1,6 @@
+from torch import Tensor
+from torch.nn import BCEWithLogitsLoss
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from bsds_dataset import BSDSDataset
@@ -13,40 +16,35 @@ if __name__ == "__main__":
     """
     testing
     """
-    model = UNet(3, depth=5, merge_mode='concat')
+    model = UNet(num_classes=1, depth=5, merge_mode='concat').float()
     data_dir = "./data/BSR"
 
     dset = BSDSDataset(data_dir)
     mb_size = 4
     loader = DataLoader(dset, batch_size=mb_size)
 
+    optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
+
     for x, y in loader:
 
+        x = x.float()
+        y = y.float()
+
+        out = model(x).float()
+
+        optimizer.zero_grad()
+        loss = BCEWithLogitsLoss()(out, y)
+        loss.backward()
+
+        optimizer.step()
+
+        out_model = out.detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320)
         out_cpu = x.detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320, 3)
         out_cpu_y = y.detach().numpy().reshape(mb_size, 320, 320)
 
         plt.imshow(out_cpu[0])
         plt.show()
-
         plt.imshow(out_cpu_y[0])
         plt.show()
-
-    # for image in dataset.train_sample_names:
-    #     x = dataset.read_image(image)
-    #     y = dataset.load_boundaries(os.path.join(groundtruth_dir, image))
-    #
-    #     x = imresize(x, (320, 320)).reshape((1, 320, 320, 3))
-    #     x = x.transpose(0, 3, 1, 2)
-    #
-    #     tensor = Variable(torch.FloatTensor(np.random.random((1, 3, 320, 320))))
-    #     out = model(tensor)
-    #     # loss = torch.sum(out)
-    #     # loss.backward()
-    #
-    #     out_cpu = out.detach().numpy().transpose(0, 2, 3, 1).reshape(320, 320, 3)
-    #
-    #     plt.imshow(out_cpu)
-    #     plt.show()
-    #     plt.imshow(y[0])
-    #     plt.show()
-
+        plt.imshow(out_model[0])
+        plt.show()
