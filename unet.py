@@ -56,14 +56,18 @@ class DownConv(nn.Module):
         self.out_channels = out_channels
         self.pooling = pooling
 
+        self.bn1 = nn.BatchNorm2d(self.in_channels)
         self.conv1 = conv3x3(self.in_channels, self.out_channels)
+        self.bn2 = nn.BatchNorm2d(self.out_channels)
         self.conv2 = conv3x3(self.out_channels, self.out_channels)
 
         if self.pooling:
             self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
+        x = self.bn1(x)
         x = F.relu(self.conv1(x))
+        x = self.bn2(x)
         x = F.relu(self.conv2(x))
         before_pool = x
         if self.pooling:
@@ -92,10 +96,13 @@ class UpConv(nn.Module):
         if self.merge_mode == 'concat':
             self.conv1 = conv3x3(
                 2 * self.out_channels, self.out_channels)
+            self.bn1 = nn.BatchNorm2d(2 * self.out_channels)
         else:
             # num of input channels to conv2 is same
             self.conv1 = conv3x3(self.out_channels, self.out_channels)
+            self.bn1 = nn.BatchNorm2d(self.out_channels)
         self.conv2 = conv3x3(self.out_channels, self.out_channels)
+        self.bn2 = nn.BatchNorm2d(self.out_channels)
 
     def forward(self, from_down, from_up):
         """ Forward pass
@@ -108,7 +115,9 @@ class UpConv(nn.Module):
             x = torch.cat((from_up, from_down), 1)
         else:
             x = from_up + from_down
+        x = self.bn1(x)
         x = F.relu(self.conv1(x))
+        x = self.bn2(x)
         x = F.relu(self.conv2(x))
         return x
 
@@ -234,4 +243,3 @@ class UNet(nn.Module):
         # as this module includes a softmax already.
         x = self.conv_final(x)
         return x
-

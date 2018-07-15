@@ -1,3 +1,6 @@
+import argparse
+import torch
+
 from torch import Tensor
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import Adam
@@ -12,11 +15,23 @@ def get_training_batch(dataset: BSDSWrapper, batch_size: int):
     dataset.load_boundaries()
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--checkpoint_dir", type=str, default="checkpoint")
+parser.add_argument("--load", help="load or not", action="store_true")
+args = parser.parse_args()
+
+def load_checkpoint(checkpoint_dir: str, mod: torch.nn.Module, optim: torch.optim.Optimizer):
+    checkpoint = torch.load(checkpoint_dir)
+    mod.load_state_dict(checkpoint['state_dict'])
+    optim.load_state_dict(checkpoint['optimizer'])
+
+
 if __name__ == "__main__":
     """
     testing
     """
     model = UNet(num_classes=1, depth=5, merge_mode='concat').cuda()
+
     data_dir = "./data/BSR"
 
     dset = BSDSDataset(data_dir)
@@ -24,6 +39,9 @@ if __name__ == "__main__":
     loader = DataLoader(dset, batch_size=mb_size)
 
     optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
+
+    if args.load:
+        load_checkpoint(checkpoint_dir=args.checkpoint_dir, mod=model, optim=optimizer)
 
     iteration = 0
 
@@ -43,17 +61,18 @@ if __name__ == "__main__":
 
             print('Loss: ', loss.cpu().detach().numpy())
 
-            # if iteration % 100 == 99:
-            #     out_model = out.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320)
-            #     out_cpu = x.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320, 3)
-            #     out_cpu_y = y.cpu().detach().numpy().reshape(mb_size, 320, 320)
-            #
-            #     plt.imshow(out_cpu[0])
-            #     plt.show()
-            #     plt.imshow(out_cpu_y[0])
-            #     plt.show()
-            #     plt.imshow(out_model[0])
-            #     plt.show()
+            if iteration % 100 == 99:
+                out_model = out.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320)
+                out_cpu = x.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320, 3)
+                out_cpu_y = y.cpu().detach().numpy().reshape(mb_size, 320, 320)
+
+                plt.imshow(out_cpu[0])
+                plt.show()
+                plt.imshow(out_cpu_y[0])
+                plt.show()
+                plt.imshow(out_model[0])
+                plt.show()
+                torch.save(model.state_dict(), args.checkpoint_dir)
 
             iteration += 1
 
