@@ -3,8 +3,8 @@ from typing import List
 
 import numpy as np
 from scipy.misc import imresize
-from tensorflow.python.data import Dataset
 
+from torch.utils.data.dataset import Dataset
 from bsds_wrapper import BSDSWrapper
 
 

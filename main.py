@@ -16,7 +16,7 @@ if __name__ == "__main__":
     """
     testing
     """
-    model = UNet(num_classes=1, depth=5, merge_mode='concat').float()
+    model = UNet(num_classes=1, depth=5, merge_mode='concat').cuda()
     data_dir = "./data/BSR"
 
     dset = BSDSDataset(data_dir)
@@ -25,26 +25,35 @@ if __name__ == "__main__":
 
     optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
 
-    for x, y in loader:
+    iteration = 0
 
-        x = x.float()
-        y = y.float()
+    while True:
+        for x, y in loader:
 
-        out = model(x).float()
+            x = x.float().cuda()
+            y = y.float().cuda()
 
-        optimizer.zero_grad()
-        loss = BCEWithLogitsLoss()(out, y)
-        loss.backward()
+            out = model(x).cuda()
 
-        optimizer.step()
+            optimizer.zero_grad()
+            loss = BCEWithLogitsLoss()(out, y)
+            loss.backward()
 
-        out_model = out.detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320)
-        out_cpu = x.detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320, 3)
-        out_cpu_y = y.detach().numpy().reshape(mb_size, 320, 320)
+            optimizer.step()
 
-        plt.imshow(out_cpu[0])
-        plt.show()
-        plt.imshow(out_cpu_y[0])
-        plt.show()
-        plt.imshow(out_model[0])
-        plt.show()
+            print('Loss: ', loss.cpu().detach().numpy())
+
+            # if iteration % 100 == 99:
+            #     out_model = out.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320)
+            #     out_cpu = x.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(mb_size, 320, 320, 3)
+            #     out_cpu_y = y.cpu().detach().numpy().reshape(mb_size, 320, 320)
+            #
+            #     plt.imshow(out_cpu[0])
+            #     plt.show()
+            #     plt.imshow(out_cpu_y[0])
+            #     plt.show()
+            #     plt.imshow(out_model[0])
+            #     plt.show()
+
+            iteration += 1
+
