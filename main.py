@@ -25,6 +25,14 @@ def load_checkpoint(checkpoint_dir: str, mod: torch.nn.Module, optim: torch.opti
     mod.load_state_dict(checkpoint['state_dict'])
     optim.load_state_dict(checkpoint['optimizer'])
 
+#
+# def evaluate(dataset: BSDSDataset, loader: DataLoader):
+#     i = 0
+#     for x, y in loader:
+#
+#
+#
+#         i++
 
 if __name__ == "__main__":
     """
@@ -32,11 +40,13 @@ if __name__ == "__main__":
     """
     model = UNet(num_classes=1, depth=5, merge_mode='concat').cuda()
 
-    data_dir = "./data/BSR"
+    data_dir: str = "../BSR"
 
-    dset = BSDSDataset(data_dir)
-    mb_size = 4
+    dset = BSDSDataset(False, data_dir)
+    mb_size = 2
     loader = DataLoader(dset, batch_size=mb_size)
+
+    # test_loader = DataLoader(BSDSDataset(True, data_dir))
 
     optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
 
