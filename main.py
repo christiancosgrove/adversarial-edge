@@ -1,4 +1,6 @@
 import argparse
+import os
+
 import torch
 
 from torch import Tensor
@@ -91,6 +93,18 @@ def print_results(sample_results, threshold_results, overall_result):
         overall_result.best_recall, overall_result.best_precision, overall_result.best_f1,
         overall_result.area_pr))
 
+def precision_recall_chart(threshold_results):
+
+    prec = []
+    rec = []
+
+    for res in threshold_results:
+        prec.append(res.precision)
+        rec.append(res.recall)
+
+    plt.plot(rec, prec)
+    plt.show()
+
 
 def evaluate(model: UNet, dset: BSDSDataset):
     def load_prediction(image: str):
@@ -101,9 +115,11 @@ def evaluate(model: UNet, dset: BSDSDataset):
         return dset.labels[image]
 
     sample_results, threshold_results, overall_result = \
-        evaluate_boundaries.pr_evaluation(5, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction, progress=tqdm.tqdm)
+        evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction, progress=tqdm.tqdm)
 
-    print_results(sample_results, threshold_results, overall_result)
+    precision_recall_chart(threshold_results)
+
+    # print_results(sample_results, threshold_results, overall_result)
 
 
 def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
@@ -154,12 +170,12 @@ def train():
 
 
             if iteration % 1000 == 999:
-                torch.save(model.state_dict(), args.checkpoint_dir)
+                torch.save(model.state_dict(), os.path.join(args.checkpoint_dir, "checkpoint_{}".format(iteration)))
 
             iteration += 1
 
             if iteration % 1000 == 999:
-                print('Loss: ', loss.cpu().detach().numpy())
+                print('iteration {}; loss {}'.format(iteration, loss.cpu().detach().numpy()))
                 evaluate(model, test_dset)
 
 if __name__ == "__main__":
