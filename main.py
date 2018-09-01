@@ -10,7 +10,8 @@ from bsds_dataset import BSDSDataset
 from bsds_wrapper import BSDSWrapper
 from unet import UNet
 import numpy as np
-
+from bsds import evaluate_boundaries
+import tqdm
 
 def get_training_batch(dataset: BSDSWrapper, batch_size: int):
     dataset.load_boundaries()
@@ -71,13 +72,22 @@ def get_model_output(model: UNet, image: np.ndarray):
 
 
 def evaluate(model: UNet, dset: BSDSDataset):
-    for image in dset.wrapper.test_sample_names:
+    def load_prediction(image: str):
         x = dset.images[image]
-        y = dset.labels[image]
+        return np.squeeze(get_model_output(model, x))
 
-        combined_out = get_model_output(model, x)
+    def load_gt_boundary(image: str):
+        return dset.labels[image]
 
-        disp_image_output(x, y, combined_out)
+    sample_results, threshold_results, overall_result = \
+        evaluate_boundaries.pr_evaluation(5, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction, progress=tqdm.tqdm)
+
+    print('')
+    print('Summary:')
+    print('{:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f}'.format(
+        overall_result.threshold, overall_result.recall, overall_result.precision, overall_result.f1,
+        overall_result.best_recall, overall_result.best_precision, overall_result.best_f1,
+        overall_result.area_pr))
 
 
 def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
@@ -91,12 +101,6 @@ def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
     plt.show()
     plt.imshow(out_reshaped * 256)
     plt.show()
-
-def disp_output(x: torch.Tensor, y: torch.Tensor, out: torch.Tensor):
-    out_model = out.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(-1, 320, 320)
-    out_cpu = x.cpu().detach().numpy().transpose(0, 2, 3, 1).reshape(-1, 320, 320, 3)
-    out_cpu_y = y.cpu().detach().numpy().reshape(-1, 320, 320)
-
 
 if __name__ == "__main__":
     """
@@ -136,9 +140,10 @@ if __name__ == "__main__":
             print('Loss: ', loss.cpu().detach().numpy())
 
             if iteration % 1000 == 999:
-                disp_output(x, y, out)
                 torch.save(model.state_dict(), args.checkpoint_dir)
 
             iteration += 1
-            evaluate(model, dset)
+
+            if iteration % 1000 == 10:
+                evaluate(model, dset)
 
