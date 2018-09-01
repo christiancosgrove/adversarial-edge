@@ -71,6 +71,27 @@ def get_model_output(model: UNet, image: np.ndarray):
     return combined_out
 
 
+
+def print_results(sample_results, threshold_results, overall_result):
+    print('Per image:')
+    for sample_index, res in enumerate(sample_results):
+        print('{:<10d} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f}'.format(
+            sample_index + 1, res.threshold, res.recall, res.precision, res.f1))
+
+    print('')
+    print('Per threshold:')
+    for thresh_i, res in enumerate(threshold_results):
+        print('{:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f}'.format(
+            res.threshold, res.recall, res.precision, res.f1))
+
+    print('')
+    print('Summary:')
+    print('{:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f}'.format(
+        overall_result.threshold, overall_result.recall, overall_result.precision, overall_result.f1,
+        overall_result.best_recall, overall_result.best_precision, overall_result.best_f1,
+        overall_result.area_pr))
+
+
 def evaluate(model: UNet, dset: BSDSDataset):
     def load_prediction(image: str):
         x = dset.images[image]
@@ -82,12 +103,7 @@ def evaluate(model: UNet, dset: BSDSDataset):
     sample_results, threshold_results, overall_result = \
         evaluate_boundaries.pr_evaluation(5, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction, progress=tqdm.tqdm)
 
-    print('')
-    print('Summary:')
-    print('{:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f} {:<10.6f}'.format(
-        overall_result.threshold, overall_result.recall, overall_result.precision, overall_result.f1,
-        overall_result.best_recall, overall_result.best_precision, overall_result.best_f1,
-        overall_result.area_pr))
+    print_results(sample_results, threshold_results, overall_result)
 
 
 def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
@@ -102,19 +118,18 @@ def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
     plt.imshow(out_reshaped * 256)
     plt.show()
 
-if __name__ == "__main__":
-    """
-    testing
-    """
+
+def train():
+
     model = UNet(num_classes=1, depth=5, merge_mode='concat').cuda()
 
     data_dir: str = "../BSR"
 
     dset = BSDSDataset(False, data_dir, (320, 320))
+
+    test_dset = BSDSDataset(True, data_dir)
     mb_size = 8
     loader = DataLoader(dset, batch_size=mb_size)
-
-    test_loader = DataLoader(BSDSDataset(True, data_dir))
 
     optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
 
@@ -137,13 +152,16 @@ if __name__ == "__main__":
 
             optimizer.step()
 
-            print('Loss: ', loss.cpu().detach().numpy())
 
             if iteration % 1000 == 999:
                 torch.save(model.state_dict(), args.checkpoint_dir)
 
             iteration += 1
 
-            if iteration % 1000 == 10:
-                evaluate(model, dset)
+            if iteration % 1000 == 999:
+                print('Loss: ', loss.cpu().detach().numpy())
+                evaluate(model, test_dset)
+
+if __name__ == "__main__":
+    train()
 
