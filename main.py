@@ -14,6 +14,7 @@ from unet import UNet
 import numpy as np
 from bsds import evaluate_boundaries
 import tqdm
+from torch.nn import functional as F
 
 def get_training_batch(dataset: BSDSWrapper, batch_size: int):
     dataset.load_boundaries()
@@ -68,7 +69,7 @@ def get_model_output(model: UNet, image: np.ndarray):
 
     tiled_x, rx, ry = divide_image(image, 3)
     tensor_x = torch.Tensor(tiled_x).float().cuda()
-    out = model(tensor_x)
+    out = F.sigmoid(model(tensor_x))
     combined_out = combine_images(rx, ry, original_width, original_height, out.cpu().detach().numpy(), 1)
     return combined_out
 
@@ -93,8 +94,7 @@ def print_results(sample_results, threshold_results, overall_result):
         overall_result.best_recall, overall_result.best_precision, overall_result.best_f1,
         overall_result.area_pr))
 
-def precision_recall_chart(threshold_results):
-
+def precision_recall_chart(threshold_results, title: str):
     prec = []
     rec = []
 
@@ -102,11 +102,13 @@ def precision_recall_chart(threshold_results):
         prec.append(res.precision)
         rec.append(res.recall)
 
-    plt.plot(rec, prec)
-    plt.show()
+    fig, ax = plt.subplots(1, 1)
+    ax.plot(rec, prec)
+    fig.savefig('figs/{}.png'.format(title))
+    plt.close(fig)
 
 
-def evaluate(model: UNet, dset: BSDSDataset):
+def evaluate(model: UNet, dset: BSDSDataset, iteration: int):
     def load_prediction(image: str):
         x = dset.images[image]
         return np.squeeze(get_model_output(model, x))
@@ -117,7 +119,7 @@ def evaluate(model: UNet, dset: BSDSDataset):
     sample_results, threshold_results, overall_result = \
         evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction, progress=tqdm.tqdm)
 
-    precision_recall_chart(threshold_results)
+    precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration))
 
     # print_results(sample_results, threshold_results, overall_result)
 
@@ -137,17 +139,17 @@ def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
 
 def train():
 
-    model = UNet(num_classes=1, depth=5, merge_mode='concat').cuda()
+    model = UNet(num_classes=1, depth=3, merge_mode='concat').cuda()
 
     data_dir: str = "../BSR"
 
     dset = BSDSDataset(False, data_dir, (320, 320))
 
     test_dset = BSDSDataset(True, data_dir)
-    mb_size = 8
+    mb_size = 4
     loader = DataLoader(dset, batch_size=mb_size)
 
-    optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
+    optimizer = Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8)
 
     if args.load:
         load_checkpoint(checkpoint_dir=args.checkpoint_dir, mod=model, optim=optimizer)
@@ -174,9 +176,9 @@ def train():
 
             iteration += 1
 
-            if iteration % 1000 == 999:
+            if iteration % 1000 == 10:
                 print('iteration {}; loss {}'.format(iteration, loss.cpu().detach().numpy()))
-                evaluate(model, test_dset)
+                evaluate(model, test_dset, iteration)
 
 if __name__ == "__main__":
     train()
