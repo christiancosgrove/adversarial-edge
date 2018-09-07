@@ -1,2 +1,5 @@
 .idea/*
-checkpoints/*
+checkpoint/*
+attacks/*
+figs/*
+ccvl.png

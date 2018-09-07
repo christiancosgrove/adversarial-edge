@@ -189,11 +189,14 @@ class UNet(nn.Module):
 
         self.down_convs = []
         self.up_convs = []
+        grow = False
 
         # create the encoder pathway and add to a list
         for i in range(depth):
             ins = self.in_channels if i == 0 else outs
-            outs = self.start_filts * (2 ** i)
+            outs = self.start_filts
+            if grow:
+                outs = outs * (2 ** i)
             pooling = True if i < depth - 1 else False
 
             down_conv = DownConv(ins, outs, pooling=pooling)
@@ -203,7 +206,10 @@ class UNet(nn.Module):
         # - careful! decoding only requires depth-1 blocks
         for i in range(depth - 1):
             ins = outs
-            outs = ins // 2
+            if grow:
+                outs = ins // 2
+            else:
+                outs = ins
             up_conv = UpConv(ins, outs, up_mode=up_mode,
                              merge_mode=merge_mode)
             self.up_convs.append(up_conv)
