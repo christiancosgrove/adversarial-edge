@@ -9,6 +9,7 @@ from scipy.misc import imread
 from torch.nn import BCEWithLogitsLoss
 from torch.nn import functional as F
 from torch.optim import Adam
+from torch.optim import RMSprop
 from torch.utils.data import DataLoader
 
 from bsds import evaluate_boundaries
@@ -126,20 +127,23 @@ def precision_recall_chart(threshold_results, title: str):
 
 
 def evaluate(model: UNet, dset: BSDSDataset, iteration: int):
+    model.training = False
+
     def load_prediction(image: str):
         x = dset.images[image]
         return np.squeeze(get_model_output(model, x))
 
     def load_gt_boundary(image: str):
-        return dset.labels[image]
+        return dset.wrapper.boundaries(image)
 
     sample_results, threshold_results, overall_result = \
-        evaluate_boundaries.pr_evaluation(10, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction,
+        evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction,
                                           progress=tqdm.tqdm)
 
     precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration))
 
     print_results(sample_results, threshold_results, overall_result)
+    model.training = True
 
 
 def disp_image_output(x: np.ndarray, y: np.ndarray, out: np.ndarray):
@@ -175,6 +179,7 @@ def disp_edge_single(y: np.ndarray, title=None, filename=None):
 
 
 def attack(model: UNet, x: np.ndarray, target_y: torch.Tensor, groundtruth_y: torch.Tensor):
+    model.training = False
     x = x.cpu().detach().numpy()
     x_adv = np.copy(x)
     step_size = 5e-3
@@ -198,6 +203,7 @@ def attack(model: UNet, x: np.ndarray, target_y: torch.Tensor, groundtruth_y: to
         x_adv = np.clip(x_adv, x - epsilon, x + epsilon)
         x_adv = np.clip(x_adv, 0, 1)
 
+    model.training = True
     return x_adv
 
 
@@ -222,17 +228,18 @@ def load_attack_target():
 
 
 def train():
-    model = UNet(num_classes=1, depth=6, start_filts=32, merge_mode='concat').cuda()
+    model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
 
     data_dir: str = "../BSR"
 
     dset = BSDSDataset(False, data_dir, (320, 320))
 
     test_dset = BSDSDataset(True, data_dir)
-    mb_size = 8
+    mb_size = 4
     loader = DataLoader(dset, batch_size=mb_size)
 
-    optimizer = Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
+    optimizer = RMSprop(model.parameters(), lr=1e-3)
+    # optimizer = Adam(model.parameters(), lr=5e-4, betas=(0.9, 0.999), eps=1e-8)
 
     if args.load:
         load_checkpoint(checkpoint_dir=args.checkpoint_dir, mod=model, optim=optimizer)
@@ -241,6 +248,7 @@ def train():
 
     while True:
         for x, y in loader:
+            model.training = True
 
             x = x.float().cuda()
             y = y.float().cuda()
@@ -262,7 +270,7 @@ def train():
 
             if iteration % 1000 == 250:
                 attack_and_display(model, x, y, target_y, out, iteration)
-            if iteration % 5000 == 0:
+            if iteration % 10000 == 0:
                 evaluate(model, test_dset, iteration)
             if iteration % 1000 == 0:
                 save_checkpoint(os.path.join(args.checkpoint_dir, "checkpoint"), model, optimizer)

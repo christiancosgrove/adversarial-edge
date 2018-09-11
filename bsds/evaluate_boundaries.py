@@ -244,7 +244,7 @@ def pr_evaluation(thresholds, sample_names, load_gt_boundaries, load_pred,
         # Evaluate predictions
         count_r, sum_r, count_p, sum_p, used_thresholds = \
             evaluate_boundaries(pred, gt_b, thresholds=thresholds,
-                                apply_thinning=False)
+                                apply_thinning=True)
 
         count_r_overall += count_r
         sum_r_overall += sum_r

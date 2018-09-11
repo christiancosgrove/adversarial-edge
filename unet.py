@@ -145,7 +145,7 @@ class UNet(nn.Module):
 
     def __init__(self, num_classes, in_channels=3, depth=3,
                  start_filts=4, up_mode='transpose',
-                 merge_mode='concat'):
+                 merge_mode='concat', grow=True):
         """
         Arguments:
             in_channels: int, number of channels in the input tensor.
@@ -189,7 +189,6 @@ class UNet(nn.Module):
 
         self.down_convs = []
         self.up_convs = []
-        grow = False
 
         # create the encoder pathway and add to a list
         for i in range(depth):
