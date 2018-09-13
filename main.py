@@ -25,6 +25,7 @@ def get_training_batch(dataset: BSDSWrapper, batch_size: int):
 parser = argparse.ArgumentParser()
 parser.add_argument("--checkpoint_dir", type=str, default="checkpoint")
 parser.add_argument("--load", help="load or not", action="store_true")
+parser.add_argument("--evaluate", help="evaluate adversaries or not", action="store_true")
 args = parser.parse_args()
 
 
@@ -45,6 +46,7 @@ def save_checkpoint(filename: str, model: torch.nn.Module, optim: torch.optim.Op
 
 
 def divide_image(image: np.ndarray, num_channels: int):
+    assert(image.ndim == 3)
     expanded = np.tile(image, (1, 2, 2))
     h = expanded.shape[1]
     w = expanded.shape[2]
@@ -63,11 +65,19 @@ def divide_image(image: np.ndarray, num_channels: int):
         ), (-1, num_channels, 320, 320)), nh // 320, nw // 320
 
 
-""" Combines the output of a U-Net model (multiple 320x320 patches) back into the original-sized image. """
-
-
+""" Combines 3x320x320 patches into a single image."""
 def combine_images(repeats_x: int, repeats_y: int, original_width: int, original_height: int, image: np.ndarray,
-                   num_channels: int):
+                      num_channels: int):
+    return np.reshape(
+        np.transpose(
+            np.reshape(image,
+                       (num_channels, 3, repeats_y, repeats_x, 320, 320)),
+            (0, 1, 2, 4, 3, 5)),
+        (num_channels, 3, repeats_y * 320, repeats_x * 320))[:, :, :original_height, :original_width]
+
+""" Combines the output of a U-Net model (multiple 320x320 patches) back into the original-sized image. """
+def combine_edge_maps(repeats_x: int, repeats_y: int, original_width: int, original_height: int, image: np.ndarray,
+                      num_channels: int):
     return np.reshape(
         np.transpose(
             np.reshape(image,
@@ -76,19 +86,28 @@ def combine_images(repeats_x: int, repeats_y: int, original_width: int, original
         (num_channels, repeats_y * 320, repeats_x * 320))[:, :original_height, :original_width]
 
 
+def attack_arbitrary_input(model: UNet, image: np.ndarray, target: np.ndarray):
+    original_height = image.shape[1]
+    original_width = image.shape[2]
+
+    tiled_x, rx, ry = divide_image(image, 3)
+    tensor_x = torch.Tensor(tiled_x).float().cuda()
+    x = attack(model, tensor_x, target, None)
+    combined_out = combine_images(rx, ry, original_width, original_height, x, 1)
+    return np.squeeze(combined_out)
+
+
 """ Gets the output of the model on an arbitrarily-sized image.
     Uses the divide_image routine to process the image in patches.
  """
-
-
-def get_model_output(model: UNet, image: np.ndarray):
+def get_model_output(model: UNet, image: np.ndarray, attack_model=False):
     original_height = image.shape[1]
     original_width = image.shape[2]
 
     tiled_x, rx, ry = divide_image(image, 3)
     tensor_x = torch.Tensor(tiled_x).float().cuda()
     out = torch.sigmoid(model(tensor_x))
-    combined_out = combine_images(rx, ry, original_width, original_height, out.cpu().detach().numpy(), 1)
+    combined_out = combine_edge_maps(rx, ry, original_width, original_height, out.cpu().detach().numpy(), 1)
     return combined_out
 
 
@@ -112,7 +131,7 @@ def print_results(sample_results, threshold_results, overall_result):
         overall_result.area_pr))
 
 
-def precision_recall_chart(threshold_results, title: str):
+def precision_recall_chart(threshold_results, title: str, dir: str='figs'):
     prec = []
     rec = []
 
@@ -122,25 +141,29 @@ def precision_recall_chart(threshold_results, title: str):
 
     fig, ax = plt.subplots(1, 1)
     ax.plot(rec, prec)
-    fig.savefig('figs/{}.png'.format(title))
+    fig.savefig('{}/{}.png'.format(dir, title))
     plt.close(fig)
 
 
-def evaluate(model: UNet, dset: BSDSDataset, iteration: int):
+def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None):
     model.training = False
 
     def load_prediction(image: str):
         x = dset.images[image]
         return np.squeeze(get_model_output(model, x))
 
+    def load_attacked_prediction(image: str):
+        x = dset.images[image]
+        return np.squeeze(get_model_output(model, attack_arbitrary_input(model, x, attack_target)))
+
     def load_gt_boundary(image: str):
         return dset.wrapper.boundaries(image)
 
     sample_results, threshold_results, overall_result = \
-        evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction,
+        evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction if attack_target is None else load_attacked_prediction,
                                           progress=tqdm.tqdm)
 
-    precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration))
+    precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration), 'dir' if attack_target is None else 'dir_adv')
 
     print_results(sample_results, threshold_results, overall_result)
     model.training = True
@@ -178,7 +201,7 @@ def disp_edge_single(y: np.ndarray, title=None, filename=None):
     plt.close(fig)
 
 
-def attack(model: UNet, x: np.ndarray, target_y: torch.Tensor, groundtruth_y: torch.Tensor):
+def attack(model: UNet, x: torch.Tensor, target_y: torch.Tensor, groundtruth_y: torch.Tensor):
     model.training = False
     x = x.cpu().detach().numpy()
     x_adv = np.copy(x)
@@ -193,8 +216,8 @@ def attack(model: UNet, x: np.ndarray, target_y: torch.Tensor, groundtruth_y: to
         out = model(x_adv).cuda()
 
         #adversarial target
-        adv_target = 1 - groundtruth_y
-        loss = BCEWithLogitsLoss()(out, target_y)
+        #adv_target = 1 - groundtruth_y
+        loss = BCEWithLogitsLoss()(out, target_y.expand(x.shape[0], -1, -1, -1))
         loss.backward()
         grad = x_adv.grad
         grad = grad.cpu().detach().numpy()
@@ -245,6 +268,10 @@ def train():
         load_checkpoint(checkpoint_dir=args.checkpoint_dir, mod=model, optim=optimizer)
 
     iteration = 0
+
+    if args.evaluate:
+        evaluate(model, dset, 0, load_attack_target())
+        return
 
     while True:
         for x, y in loader:

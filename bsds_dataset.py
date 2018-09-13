@@ -58,3 +58,4 @@ class BSDSDataset(Dataset):
 
     def __len__(self):
         return len(self.sample_names)
+

@@ -144,3 +144,145 @@ class BSDSWrapper (object):
         gt = BSDSWrapper.load_ground_truth_mat(path)
         num_gts = gt.shape[1]
         return [gt[0,i]['Boundaries'][0,0] for i in range(num_gts)]
+
+
+class BSDSHEDAugWrapper (object):
+    """
+    BSDS HED augmented dataset wrapper
+    Given the path to the root of the BSDS dataset, this class provides
+    methods for loading images, ground truths and evaluating predictions
+    The augmented dataset can be downloaded from:
+    http://vcl.ucsd.edu/hed/HED-BSDS.tar
+    See their repo for more information:
+    http://github.com/s9xie/hed
+    Attribtes:
+    bsds_dataset - standard BSDS dataset
+    root_path - the root path of the dataset
+    """
+
+    AUG_SCALES = [
+        '', '_scale_0.5', '_scale_1.5'
+    ]
+
+    AUG_ROTS = [
+        '0.0', '22.5', '45.0', '67.5', '90.0', '112.5', '135.0', '157.5', '180.0', '202.5', '225.0', '247.5',
+        '270.0', '292.5', '315.0', '337.5'
+    ]
+
+    AUG_FLIPS = [
+        '1_0', '1_1'
+    ]
+
+
+    def __init__(self, bsds_dataset, root_path):
+        """
+        Constructor
+        :param bsds_dataset: the standard BSDS dataset
+        :param root_path: the path to the root of the augmented dataset
+        """
+        self.bsds_dataset = bsds_dataset
+        self.root_path = root_path
+        self.ALL_AUGS = [(s, r, f) for f in self.AUG_FLIPS for r in self.AUG_ROTS for s in self.AUG_SCALES]
+
+        self.sample_name_to_fold = {}
+        for name in bsds_dataset.train_sample_names:
+            self.sample_name_to_fold[name] = 'train'
+        for name in bsds_dataset.val_sample_names:
+            self.sample_name_to_fold[name] = 'train'
+        for name in bsds_dataset.test_sample_names:
+            self.sample_name_to_fold[name] = 'test'
+
+    def _data_path(self, data_type, scale, rot, flip, name, ext):
+        fold = self.sample_name_to_fold[name]
+        if data_type not in {'data', 'gt'}:
+            raise ValueError("data_type should be 'data' or 'gt', not {}".format(data_type))
+        if scale not in self.AUG_SCALES:
+            raise ValueError("scale should be one of {}, not {}".format(self.AUG_SCALES, scale))
+        if rot not in self.AUG_ROTS:
+            raise ValueError("rot should be one of {}, not {}".format(self.AUG_ROTS, rot))
+        if flip not in self.AUG_FLIPS:
+            raise ValueError("flip should be one of {}, not {}".format(self.AUG_FLIPS, flip))
+        return os.path.join(self.root_path, fold, 'aug_{}{}'.format(data_type, scale), '{}_{}'.format(rot, flip),
+                            '{}{}'.format(os.path.split(name)[1], ext))
+
+    @classmethod
+    def augment_names(cls, names):
+        """
+        Add augmentation parameters to the supplied list of names. Converts a
+        sequence of names into a sequence of tuples that provide the name along
+        with augmentation parameters. Each name is combined will all possible
+        combinations of augmentation parameters. By default, there are 96
+        possible augmentations, so the resulting list will be 96x the length
+        of `names`.
+        The tuples returned can be used as parameters for the `read_image`,
+        `image_shape` and `mean_boundaries` methods.
+        :param names: a sequence of names
+        :return: list of `(name, scale_aug, rotate_aug, flip_aug)` tuples
+        """
+        return [(n, s, r, f) for n in names for (s, r, f) in cls.ALL_AUGS]
+
+    def read_image(self, name, scale, rot, flip):
+        """
+        Load the image identified by the sample name and augmentation
+        parameters.
+        The sample name `name` should come from the `train_sample_names`,
+        `val_sample_names` and `test_sample_names` attributes of a
+        `BSDSDataset` instance.
+        The `scale`, `rot` and `flip` augmentation parameters should
+        come from `AUG_SCALES`, `AUG_ROTS` and `AUG_FLIPS` attributes
+        of the `BSDSHEDAugDataset` class
+        :param name: the sample name
+        :param scale: augmentation scale
+        :param rot: augmentation rotation
+        :param flip: augmentation flip
+        :return: a tuple of the form `(height, width, channels)`
+        """
+        path = self._data_path('data', scale, rot, flip, name, '.jpg')
+        return img_as_float(imread(path)).astype(np.float32)
+
+    def get_image_shape(self, name, scale, rot, flip):
+        """
+        Get the shape of the image identified by the sample name
+        and augmentation parameters.
+        The sample name `name` should come from the `train_sample_names`,
+        `val_sample_names` and `test_sample_names` attributes of a
+        `BSDSDataset` instance.
+        The `scale`, `rot` and `flip` augmentation parameters should
+        come from `AUG_SCALES`, `AUG_ROTS` and `AUG_FLIPS` attributes
+        of the `BSDSHEDAugDataset` class
+        :param name: the sample name
+        :param scale: augmentation scale
+        :param rot: augmentation rotation
+        :param flip: augmentation flip
+        :return: a (H,W,3) array containing the image, scaled to range [0,1]
+        """
+        path = self._data_path('data', scale, rot, flip, name, '.jpg')
+        img = Image.open(path)
+        return img.height, img.width, 3
+
+    def mean_boundaries(self, name, scale, rot, flip):
+        """
+        Load the ground truth boundaries identified by the sample name
+        and augmentation parameters.
+        See the `read_image` method for more information on the sample
+        name and augmentation parameters
+        :param name: the sample name
+        :param scale: augmentation scale
+        :param rot: augmentation rotation
+        :param flip: augmentation flip
+        :return: a list of (H,W) arrays, each of which contains a
+        boundary ground truth
+        """
+        path = self._data_path('gt', scale, rot, flip, name, '.png')
+        return self.load_mean_boundaries(path)
+
+    @staticmethod
+    def load_mean_boundaries(path):
+        """
+        Load the ground truth boundaries from the Matlab file
+        at the specified path.
+        :param path: path
+        :return: a list of (H,W) arrays, each of which contains a
+        boundary ground truth
+        """
+        return rgb2grey(img_as_float(imread(path))).astype(np.float32)
