@@ -16,6 +16,7 @@ from bsds import evaluate_boundaries
 from bsds_dataset import BSDSDataset
 from bsds_wrapper import BSDSWrapper
 from unet import UNet
+import pickle
 
 
 def get_training_batch(dataset: BSDSWrapper, batch_size: int):
@@ -46,7 +47,7 @@ def save_checkpoint(filename: str, model: torch.nn.Module, optim: torch.optim.Op
 
 
 def divide_image(image: np.ndarray, num_channels: int):
-    assert(image.ndim == 3)
+    assert (image.ndim == 3)
     expanded = np.tile(image, (1, 2, 2))
     h = expanded.shape[1]
     w = expanded.shape[2]
@@ -66,8 +67,10 @@ def divide_image(image: np.ndarray, num_channels: int):
 
 
 """ Combines 3x320x320 patches into a single image."""
+
+
 def combine_images(repeats_x: int, repeats_y: int, original_width: int, original_height: int, image: np.ndarray,
-                      num_channels: int):
+                   num_channels: int):
     return np.reshape(
         np.transpose(
             np.reshape(image,
@@ -75,7 +78,10 @@ def combine_images(repeats_x: int, repeats_y: int, original_width: int, original
             (0, 1, 2, 4, 3, 5)),
         (num_channels, 3, repeats_y * 320, repeats_x * 320))[:, :, :original_height, :original_width]
 
+
 """ Combines the output of a U-Net model (multiple 320x320 patches) back into the original-sized image. """
+
+
 def combine_edge_maps(repeats_x: int, repeats_y: int, original_width: int, original_height: int, image: np.ndarray,
                       num_channels: int):
     return np.reshape(
@@ -92,7 +98,7 @@ def attack_arbitrary_input(model: UNet, image: np.ndarray, target: np.ndarray):
 
     tiled_x, rx, ry = divide_image(image, 3)
     tensor_x = torch.Tensor(tiled_x).float().cuda()
-    x = attack(model, tensor_x, target, None)
+    x, _ = attack(model, tensor_x, target, None)
     combined_out = combine_images(rx, ry, original_width, original_height, x, 1)
     return np.squeeze(combined_out)
 
@@ -100,6 +106,8 @@ def attack_arbitrary_input(model: UNet, image: np.ndarray, target: np.ndarray):
 """ Gets the output of the model on an arbitrarily-sized image.
     Uses the divide_image routine to process the image in patches.
  """
+
+
 def get_model_output(model: UNet, image: np.ndarray, attack_model=False):
     original_height = image.shape[1]
     original_width = image.shape[2]
@@ -131,7 +139,7 @@ def print_results(sample_results, threshold_results, overall_result):
         overall_result.area_pr))
 
 
-def precision_recall_chart(threshold_results, title: str, dir: str='figs'):
+def precision_recall_chart(threshold_results, title: str, dir: str = 'figs'):
     prec = []
     rec = []
 
@@ -160,10 +168,16 @@ def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None)
         return dset.wrapper.boundaries(image)
 
     sample_results, threshold_results, overall_result = \
-        evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary, load_prediction if attack_target is None else load_attacked_prediction,
+        evaluate_boundaries.pr_evaluation(20, dset.wrapper.test_sample_names, load_gt_boundary,
+                                          load_prediction if attack_target is None else load_attacked_prediction,
                                           progress=tqdm.tqdm)
 
-    precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration), 'dir' if attack_target is None else 'dir_adv')
+    precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration),
+                           'figs' if attack_target is None else 'figs_adv')
+
+    with open('eval_{}_{}.pkl'.format(iteration, 'normal' if attack_target is None else 'adv'), 'wb') as file:
+        pickle.dump({'sample_results': sample_results, 'threshold_results': threshold_results,
+                     'overall_result': overall_result}, file)
 
     print_results(sample_results, threshold_results, overall_result)
     model.training = True
@@ -210,37 +224,45 @@ def attack(model: UNet, x: torch.Tensor, target_y: torch.Tensor, groundtruth_y: 
 
     iterations = 5
 
+    perturbation = np.zeros_like(x)
+
     for i in range(iterations):
         x_adv = torch.Tensor(x_adv).cuda()
         x_adv.requires_grad = True
         out = model(x_adv).cuda()
 
-        #adversarial target
-        #adv_target = 1 - groundtruth_y
+        # adversarial target
+        # adv_target = 1 - groundtruth_y
         loss = BCEWithLogitsLoss()(out, target_y.expand(x.shape[0], -1, -1, -1))
         loss.backward()
         grad = x_adv.grad
         grad = grad.cpu().detach().numpy()
+        x_prev = np.copy(x_adv)
         x_adv = x_adv.cpu().detach().numpy()
         x_adv = np.add(x_adv, -step_size * np.sign(grad))
         x_adv = np.clip(x_adv, x - epsilon, x + epsilon)
         x_adv = np.clip(x_adv, 0, 1)
+        perturbation += x_adv - x_prev
 
     model.training = True
-    return x_adv
+    return x_adv, perturbation
 
 
-def attack_and_display(model: UNet, x: torch.Tensor, y: np.ndarray, target_y: torch.Tensor, model_out: torch.Tensor, iteration: int):
-    attack_out = attack(model, x[:1], target_y[:1], y[:1])
+def attack_and_display(model: UNet, x: torch.Tensor, y: np.ndarray, target_y: torch.Tensor, model_out: torch.Tensor,
+                       iteration: int):
+    attack_out, perturbation = attack(model, x[:1], target_y[:1], y[:1])
     disp_image_single(x[0], 'Real Input', 'attacks/real_{}.png'.format(iteration))
     disp_image_single(attack_out[0], 'Attacked Input', 'attacks/att_{}.png'.format(iteration))
+    disp_image_single(perturbation * 128, 'Perturbation', 'pert/pert_{}.png'.format(iteration))
 
     # Compute model output on adversarial input
 
     adv_out = model(torch.Tensor(attack_out).cuda())
 
-    disp_edge_single(torch.sigmoid(adv_out[0]).cpu().detach().numpy(), 'Adversarial Output', 'attacks/adv_{}.png'.format(iteration))
-    disp_edge_single(torch.sigmoid(model_out[0]).cpu().detach().numpy(), 'Model Output', 'attacks/model_{}.png'.format(iteration))
+    disp_edge_single(torch.sigmoid(adv_out[0]).cpu().detach().numpy(), 'Adversarial Output',
+                     'attacks/adv_{}.png'.format(iteration))
+    disp_edge_single(torch.sigmoid(model_out[0]).cpu().detach().numpy(), 'Model Output',
+                     'attacks/model_{}.png'.format(iteration))
     disp_edge_single(target_y[0].cpu().detach().numpy(), 'Target Output', 'attacks/target_{}.png'.format(iteration))
     disp_edge_single(y[0].cpu().detach().numpy(), 'Groundtruth Output', 'attacks/gt_{}.png'.format(iteration))
 
@@ -270,6 +292,7 @@ def train():
     iteration = 0
 
     if args.evaluate:
+        evaluate(model, dset, 0, None)
         evaluate(model, dset, 0, load_attack_target())
         return
 
