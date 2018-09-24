@@ -23,13 +23,6 @@ def get_training_batch(dataset: BSDSWrapper, batch_size: int):
     dataset.load_boundaries()
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--checkpoint_dir", type=str, default="checkpoint")
-parser.add_argument("--load", help="load or not", action="store_true")
-parser.add_argument("--evaluate", help="evaluate adversaries or not", action="store_true")
-args = parser.parse_args()
-
-
 def load_checkpoint(checkpoint_dir: str, mod: torch.nn.Module, optim: torch.optim.Optimizer):
     checkpoint = torch.load(checkpoint_dir)
     mod.load_state_dict(checkpoint['state_dict'])
@@ -92,7 +85,7 @@ def combine_edge_maps(repeats_x: int, repeats_y: int, original_width: int, origi
         (num_channels, repeats_y * 320, repeats_x * 320))[:, :original_height, :original_width]
 
 
-def attack_arbitrary_input(model: UNet, image: np.ndarray, target: np.ndarray):
+def attack_arbitrary_input(model: UNet, image: np.ndarray, target: torch.Tensor):
     original_height = image.shape[1]
     original_width = image.shape[2]
 
@@ -237,8 +230,8 @@ def attack(model: UNet, x: torch.Tensor, target_y: torch.Tensor, groundtruth_y: 
         loss.backward()
         grad = x_adv.grad
         grad = grad.cpu().detach().numpy()
-        x_prev = np.copy(x_adv)
         x_adv = x_adv.cpu().detach().numpy()
+        x_prev = np.copy(x_adv)
         x_adv = np.add(x_adv, -step_size * np.sign(grad))
         x_adv = np.clip(x_adv, x - epsilon, x + epsilon)
         x_adv = np.clip(x_adv, 0, 1)
@@ -253,7 +246,7 @@ def attack_and_display(model: UNet, x: torch.Tensor, y: np.ndarray, target_y: to
     attack_out, perturbation = attack(model, x[:1], target_y[:1], y[:1])
     disp_image_single(x[0], 'Real Input', 'attacks/real_{}.png'.format(iteration))
     disp_image_single(attack_out[0], 'Attacked Input', 'attacks/att_{}.png'.format(iteration))
-    disp_image_single(perturbation * 128, 'Perturbation', 'pert/pert_{}.png'.format(iteration))
+    disp_edge_single(perturbation[0][0] * 10, 'Perturbation', 'pert/pert_{}.png'.format(iteration))
 
     # Compute model output on adversarial input
 
@@ -273,7 +266,7 @@ def load_attack_target():
 
 
 def train():
-    model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
+    model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
 
     data_dir: str = "../BSR"
 
@@ -293,7 +286,13 @@ def train():
 
     if args.evaluate:
         evaluate(model, dset, 0, None)
-        evaluate(model, dset, 0, load_attack_target())
+
+        if args.suppress:
+            target = np.zeros(320, 320)
+        else:
+            target = load_attack_target()
+
+        evaluate(model, dset, 0, target)
         return
 
     while True:
@@ -327,4 +326,11 @@ def train():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoint")
+    parser.add_argument("--load", help="load or not", action="store_true")
+    parser.add_argument("--suppress", help="suppress edges when performing adversarial attacks?", action="store_true")
+    parser.add_argument("--evaluate", help="evaluate adversaries or not", action="store_true")
+    args = parser.parse_args()
+
     train()
