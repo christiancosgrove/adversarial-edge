@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import tqdm
 from scipy.misc import imread
+from scipy.ndimage import gaussian_filter
 from torch.nn import BCEWithLogitsLoss
 from torch.nn import functional as F
 from torch.optim import Adam
@@ -85,13 +86,14 @@ def combine_edge_maps(repeats_x: int, repeats_y: int, original_width: int, origi
         (num_channels, repeats_y * 320, repeats_x * 320))[:, :original_height, :original_width]
 
 
-def attack_arbitrary_input(model: UNet, image: np.ndarray, target: torch.Tensor):
+def attack_arbitrary_input(model: UNet, image: np.ndarray, target: torch.Tensor, mask_target: np.array):
     original_height = image.shape[1]
     original_width = image.shape[2]
 
     tiled_x, rx, ry = divide_image(image, 3)
+    mask, _, _ = divide_image(mask_target, 1)
     tensor_x = torch.Tensor(tiled_x).float().cuda()
-    x, _ = attack(model, tensor_x, target, None)
+    x, _ = attack(model, tensor_x, target, mask)
     combined_out = combine_images(rx, ry, original_width, original_height, x, 1)
     return np.squeeze(combined_out)
 
@@ -146,7 +148,7 @@ def precision_recall_chart(threshold_results, title: str, dir: str = 'figs'):
     plt.close(fig)
 
 
-def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None):
+def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None, mask_target=False):
     model.training = False
 
     def load_prediction(image: str):
@@ -155,7 +157,12 @@ def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None)
 
     def load_attacked_prediction(image: str):
         x = dset.images[image]
-        return np.squeeze(get_model_output(model, attack_arbitrary_input(model, x, attack_target)))
+        y = None
+        if mask_target:
+            y = gaussian_filter(dset.labels[image], sigma=2)
+            y[y > 0.001] = 0.0
+            y[y <= 0.001] = 1.0
+        return np.squeeze(get_model_output(model, attack_arbitrary_input(model, x, attack_target, y)))
 
     def load_gt_boundary(image: str):
         return dset.wrapper.boundaries(image)
@@ -208,7 +215,7 @@ def disp_edge_single(y: np.ndarray, title=None, filename=None):
     plt.close(fig)
 
 
-def attack(model: UNet, x: torch.Tensor, target_y: torch.Tensor, groundtruth_y: torch.Tensor):
+def attack(model: UNet, x: torch.Tensor, target_y: torch.Tensor, mask_target: np.array):
     model.training = False
     x = x.cpu().detach().numpy()
     x_adv = np.copy(x)
@@ -232,7 +239,10 @@ def attack(model: UNet, x: torch.Tensor, target_y: torch.Tensor, groundtruth_y: 
         grad = grad.cpu().detach().numpy()
         x_adv = x_adv.cpu().detach().numpy()
         x_prev = np.copy(x_adv)
-        x_adv = np.add(x_adv, -step_size * np.sign(grad))
+        delta = -step_size * np.sign(grad)
+        if mask_target is not None:
+            delta = np.multiply(delta, mask_target)
+        x_adv = np.add(x_adv, delta)
         x_adv = np.clip(x_adv, x - epsilon, x + epsilon)
         x_adv = np.clip(x_adv, 0, 1)
         perturbation += x_adv - x_prev
@@ -266,7 +276,8 @@ def load_attack_target():
 
 
 def train():
-    model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
+    # model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
+    model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
 
     data_dir: str = "../BSR"
 
@@ -285,14 +296,15 @@ def train():
     iteration = 0
 
     if args.evaluate:
-        evaluate(model, dset, 0, None)
+        # evaluate(model, dset, 0, None)
 
         if args.suppress:
-            target = np.zeros(320, 320)
+            target = np.zeros((1, 320, 320))
+            target = torch.Tensor(target).cuda()
         else:
             target = load_attack_target()
 
-        evaluate(model, dset, 0, target)
+        evaluate(model, dset, 0, target, mask_target=args.mask_target)
         return
 
     while True:
@@ -329,8 +341,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoint")
     parser.add_argument("--load", help="load or not", action="store_true")
-    parser.add_argument("--suppress", help="suppress edges when performing adversarial attacks?", action="store_true")
     parser.add_argument("--evaluate", help="evaluate adversaries or not", action="store_true")
+    parser.add_argument("--suppress", help="suppress edges when performing adversarial attacks?", action="store_true")
+    parser.add_argument("--mask_target", help="disallow perturbations near edges?", action="store_true")
+
     args = parser.parse_args()
 
     train()
