@@ -2,12 +2,12 @@ import pickle
 import matplotlib.pyplot as plt
 import os
 
-model_dir = 'models/deep1'
+model_dir = 'models/shallow1'
 
 with open(os.path.join(model_dir, 'eval_0_adv.pkl'), 'rb') as f:
     tr_adv = pickle.load(f)['threshold_results']
 
-with open(os.path.join(model_dir, 'eval_0_adv_suppress.pkl'), 'rb') as f:
+with open(os.path.join(model_dir, 'eval_0_adv_suppress_mask.pkl'), 'rb') as f:
     results = pickle.load(f)
     tr_adv_suppress = results['threshold_results']
     f1_adv_suppress = results['overall_result'].f1

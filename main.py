@@ -160,8 +160,8 @@ def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None,
         y = None
         if mask_target:
             y = gaussian_filter(dset.labels[image], sigma=2)
-            y[y > 0.001] = 0.0
             y[y <= 0.001] = 1.0
+            y[y > 0.001] = 0.0
         return np.squeeze(get_model_output(model, attack_arbitrary_input(model, x, attack_target, y)))
 
     def load_gt_boundary(image: str):
@@ -276,8 +276,8 @@ def load_attack_target():
 
 
 def train():
-    # model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
-    model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
+    model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
+    # model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
 
     data_dir: str = "../BSR"
 
