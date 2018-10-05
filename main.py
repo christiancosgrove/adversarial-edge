@@ -68,9 +68,9 @@ def combine_images(repeats_x: int, repeats_y: int, original_width: int, original
     return np.reshape(
         np.transpose(
             np.reshape(image,
-                       (num_channels, 3, repeats_y, repeats_x, 320, 320)),
-            (0, 1, 2, 4, 3, 5)),
-        (num_channels, 3, repeats_y * 320, repeats_x * 320))[:, :, :original_height, :original_width]
+                       (repeats_y, repeats_x, num_channels, 320, 320)),
+            (2, 0, 3, 1, 4)),
+        (num_channels, repeats_y * 320, repeats_x * 320))[:, :original_height, :original_width]
 
 
 """ Combines the output of a U-Net model (multiple 320x320 patches) back into the original-sized image. """
@@ -91,10 +91,12 @@ def attack_arbitrary_input(model: UNet, image: np.ndarray, target: torch.Tensor,
     original_width = image.shape[2]
 
     tiled_x, rx, ry = divide_image(image, 3)
-    mask, _, _ = divide_image(mask_target, 1)
+    mask = None
+    if mask_target is not None:
+        mask, _, _ = divide_image(mask_target, 1)
     tensor_x = torch.Tensor(tiled_x).float().cuda()
     x, _ = attack(model, tensor_x, target, mask)
-    combined_out = combine_images(rx, ry, original_width, original_height, x, 1)
+    combined_out = combine_images(rx, ry, original_width, original_height, x, 3)
     return np.squeeze(combined_out)
 
 
@@ -159,9 +161,10 @@ def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None,
         x = dset.images[image]
         y = None
         if mask_target:
-            y = gaussian_filter(dset.labels[image], sigma=2)
-            y[y <= 0.001] = 1.0
-            y[y > 0.001] = 0.0
+            y = gaussian_filter(dset.labels[image], sigma=args.mask_radius)
+            mask = y <= 0.001
+            y[mask] = 1.0
+            y[~mask] = 0.0
         return np.squeeze(get_model_output(model, attack_arbitrary_input(model, x, attack_target, y)))
 
     def load_gt_boundary(image: str):
@@ -174,8 +177,10 @@ def evaluate(model: UNet, dset: BSDSDataset, iteration: int, attack_target=None,
 
     precision_recall_chart(threshold_results, 'iteration_{}'.format(iteration),
                            'figs' if attack_target is None else 'figs_adv')
-
-    with open('eval_{}_{}.pkl'.format(iteration, 'normal' if attack_target is None else 'adv'), 'wb') as file:
+    fname = 'eval_{}_{}.pkl'.format(iteration, 'normal' if attack_target is None else 'adv')
+    if args.eval_output is not None:
+        fname = args.eval_output
+    with open(fname, 'wb') as file:
         pickle.dump({'sample_results': sample_results, 'threshold_results': threshold_results,
                      'overall_result': overall_result}, file)
 
@@ -276,8 +281,10 @@ def load_attack_target():
 
 
 def train():
-    model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
-    # model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
+    if args.shallow:
+        model = UNet(num_classes=1, depth=1, start_filts=32, merge_mode='concat', grow=True).cuda()
+    else:
+        model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
 
     data_dir: str = "../BSR"
 
@@ -344,6 +351,9 @@ if __name__ == "__main__":
     parser.add_argument("--evaluate", help="evaluate adversaries or not", action="store_true")
     parser.add_argument("--suppress", help="suppress edges when performing adversarial attacks?", action="store_true")
     parser.add_argument("--mask_target", help="disallow perturbations near edges?", action="store_true")
+    parser.add_argument("--shallow", help="use shallow model?", action="store_true")
+    parser.add_argument("--mask_radius", type=float, default=2)
+    parser.add_argument("--eval_output", type=str)
 
     args = parser.parse_args()
 

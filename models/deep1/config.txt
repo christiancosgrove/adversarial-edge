@@ -1,0 +1,8 @@
+Trained 9/15
+
+
+checkpoint_deep1
+model = UNet(num_classes=1, depth=3, start_filts=32, merge_mode='concat', grow=True).cuda()
+mb_size = 4
+
+optimizer = RMSprop(model.parameters(), lr=1e-3)
